@@ -1,0 +1,155 @@
+#! /usr/bin/env ruby
+  
+require "net/http"
+require "net/https"
+require "json"
+require "uri"
+
+
+class GehirnResource
+  def initialize(domain, domain_id, resource, resource_id, token, secret)
+    @domain = domain
+    @domain_id = domain_id
+    @resource = resource
+    @resource_id = resource_id
+    @token = token
+    @secret = secret
+  end
+
+  def update_ddns
+    url = URI.parse("https://cp.gehirn.jp/api/dns/resource/#{@domain_id}/#{@resource_id}")
+  
+    req = Net::HTTP::Put.new(url.path, initheader = {'Content-Type' =>'application/json'})
+    req.basic_auth(@token, @secret)
+
+    req.body = {
+      "Resource" => {
+        "HostName" => "@",
+        "IPAddress" => "auto"
+      }
+    }.to_json
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    res = http.request(req)
+  
+    if res.is_a?(Net::HTTPOK)
+      JSON.parse(res.body)
+    else
+      raise res.inspect
+    end
+   end
+end
+
+
+class GehirnDomain
+  def initialize(domain, domain_id, token, secret)
+    @domain = domain
+    @domain_id = domain_id
+    @token = token
+    @secret = secret
+
+    auth()
+  end
+
+  def auth
+    url = URI.parse("https://cp.gehirn.jp/api/dns/verify/#{@domain}")
+  
+    req = Net::HTTP::Get.new(url.path)
+    req.basic_auth(@token, @secret)
+  
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    res = http.request(req)
+  
+    if res.is_a?(Net::HTTPOK)
+      JSON.parse(res.body)
+    else
+      raise res.inspect
+    end
+  end
+ 
+  def resource_list()
+    url = URI.parse("https://cp.gehirn.jp/api/dns/resource/#{@domain_id}")
+
+    req = Net::HTTP::Get.new(url.path)
+    req.basic_auth(@token, @secret)
+  
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    res = http.request(req)
+  
+    if res.is_a?(Net::HTTPOK)
+      JSON.parse(res.body)
+    else
+      raise res.inspect
+    end
+  end
+
+  def resource(record)
+    list = resource_list()
+
+    resource = list["Resource"][record]
+
+    if !resource
+      raise "record not found"
+    end
+
+    Array(resource).map { |_|
+      GehirnResource.new(@domain, @domain_id, record, _["ID"], @token, @secret)
+    }
+  end
+end
+  
+
+class GehirnDNS
+  def initialize(token, secret)
+    @token = token
+    @secret = secret
+  end
+  
+  def zone_list()
+    url = URI.parse("https://cp.gehirn.jp/api/dns/domain")
+  
+    req = Net::HTTP::Get.new(url.path)
+    req.basic_auth(@token, @secret)
+  
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    res = http.request(req)
+  
+    if res.is_a?(Net::HTTPOK)
+      JSON.parse(res.body)
+    else
+      raise res.inspect
+    end
+  end
+  
+  def domain(domain)
+    list = zone_list()
+
+    result = list["Domain"].find { |_| _["Name"] == "#{domain}." }
+
+    if !result
+      raise "domain not found"
+    end
+
+    GehirnDomain.new(domain, result["ID"].to_i, @token, @secret)
+  end
+end 
+
+
+if ARGV.length != 3
+  $stderr.puts "#{$0} domain token secret"
+  exit 1
+end
+
+gehirn = GehirnDNS.new(ARGV[1], ARGV[2])
+gehirn.domain(ARGV[0]).resource("A").first.update_ddns
+
+=begin
+gehirn = GehirnDNS.new("69408435-5e49-4f51-a599-1aad3a35d175", "r4bvh2xvEBKe4Nz1jQ8WRO5MXMjpYs08DLBtvf8OetPVMSBogCChuwQE95vWGSbC")
+
+gehirn.domain("araaraufufu.pw").resource("A").first.update_ddns
+=end
+
